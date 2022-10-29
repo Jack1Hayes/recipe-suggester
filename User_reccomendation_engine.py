@@ -12,8 +12,8 @@ from sklearn.metrics.pairwise import pairwise_distances
 from sklearn.metrics import mean_squared_error
 from math import sqrt
 
-I = pd.read_csv(r'C:\Users\Hayes\OneDrive\Documents\Data_sets\Food\interactions_train.csv')
-R = pd.read_csv(r'C:\Users\Hayes\OneDrive\Documents\Data_sets\Food\RAW_recipes.csv')
+I = pd.read_csv('file path for interactions_train.csv')
+R = pd.read_csv(' file path for RAW_recipes.csv')
 
 #show recipe rating distribution
 
