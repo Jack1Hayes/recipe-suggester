@@ -1,0 +1,792 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Sun Mar 12 13:03:21 2023
+
+@author: Hayes
+"""
+
+
+from tkinter.messagebox import showerror
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.metrics.pairwise import pairwise_distances
+import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
+import requests 
+from bs4 import BeautifulSoup
+import random 
+
+
+
+I = pd.read_csv(r'C:\Users\Hayes\OneDrive\Documents\Data_sets\Coding projects\Food\interactions_train.csv')
+R = pd.read_csv(r'C:\Users\Hayes\OneDrive\Documents\Data_sets\Coding projects\Food\RAW_recipes.csv')
+
+#show recipe rating distribution
+
+#I.rating.value_counts().plot(kind = 'bar', fontsize = 14,
+#                             figsize = (5, 2)).set_title('Distribution of Rating',
+#                                                         fontsize = 16, ha = 'center', va = 'bottom')
+
+
+
+
+#group recipies and user IDs
+grouped_1 = I.groupby(['user_id'], as_index = False, sort = False).agg({'recipe_id':'count'}).reset_index(drop = True)
+grouped_1 = grouped_1.rename(columns = {'recipe_id':'reviews_count'})
+grouped_1 = grouped_1.sort_values('reviews_count', ascending = False).iloc[:7500, :]
+
+grouped_2 = I.groupby(['recipe_id'], as_index = False, sort = False).agg({'user_id':'count'}).reset_index(drop = True)
+grouped_2 = grouped_2.rename(columns = {'user_id':'reviews_count'})
+grouped_2 = grouped_2.sort_values('reviews_count', ascending = False).iloc[:7500, :]
+
+_part = pd.merge(I.merge(grouped_1).drop(['reviews_count'], axis = 1), grouped_2).drop(['reviews_count'], axis = 1)
+
+
+#print('unique users:',len(_part.user_id.unique()))
+#print('unique recipes:',len(_part.recipe_id.unique()))
+
+
+
+
+
+#Show stats for users and recipies 
+
+grouped_user = _part.groupby(['user_id'], as_index = False, sort = False).agg({'recipe_id':'count'}).reset_index(drop = True)
+grouped_user = grouped_user.rename(columns = {'recipe_id':'reviews_count'})
+
+#display(grouped_user[['reviews_count']].describe())
+
+grouped_recipe = _part.groupby(['recipe_id'], as_index = False, sort = False).agg({'user_id':'count'}).reset_index(drop = True)
+grouped_recipe = grouped_recipe.rename(columns = {'user_id':'reviews_count'})
+
+#display(grouped_recipe[['reviews_count']].describe())
+
+
+#_part.rating.value_counts().plot(kind = 'bar', fontsize = 14, 
+#                                 figsize = (5, 2)).set_title('Distribution of Rating',
+#                                                             fontsize = 16, ha = 'center', va = 'bottom')
+
+#plt.show()
+
+
+
+
+
+
+
+#Map the values of rating into the train and test data sets
+
+new_userID = dict(zip(list(_part['user_id'].unique()),
+                      list(range(len(_part['user_id'].unique())))))
+
+#display(new_userID)
+
+new_recipeID = dict(zip(list(_part['recipe_id'].unique()),
+                        list(range(len(_part['recipe_id'].unique())))))
+
+#display(new_recipeID)
+
+df = _part.replace({'user_id': new_userID, 'recipe_id': new_recipeID})
+
+
+
+
+
+#print('The recipes without names: ', R['id'][R['name'].isnull()].values[0])
+
+#display(df[df['recipe_id'] == R['id'][R['name'].isnull()].values[0]])
+
+recipe = R[['name', 'id', 'ingredients']].merge(_part[['recipe_id']], 
+                                                left_on = 'id', right_on = 'recipe_id', 
+                                                how = 'right').drop(['id'], axis = 1).drop_duplicates().reset_index(drop = True)
+
+# apply centered cosine to the “df.” minimizes the differences between the “hard raters” and “easy raters.”
+
+mean = df.groupby(['user_id'], as_index = False, sort = False).mean().rename(columns = {'rating':'rating_mean'})
+df = df.merge(mean[['user_id','rating_mean']], how = 'left')
+df.insert(2, 'rating_adjusted', df['rating'] - df['rating_mean'])
+
+ 
+# Using pandas.unique() to unique values in multiple columns
+grouped_3 = pd.DataFrame.from_dict(new_recipeID.items())
+
+# Outputs
+# ['Spark' 'PySpark' 'Python' 'pandas' 20000 25000 22000 30000]
+
+# To measure the performance of this recommendation engine in the next steps, I am going to split the “df” into ¾ train data set and ¼ test data set.
+
+train_data, test_data = train_test_split(df, test_size = 0.25)
+n_users = df.user_id.unique()
+n_items = df.recipe_id.unique()
+train_data_matrix = np.zeros((n_users.shape[0], n_items.shape[0]))
+for row in train_data.itertuples():
+    train_data_matrix[row[1]-1, row[2]-1] = row[3]
+#display(train_data_matrix.shape)
+#display(train_data_matrix)
+
+
+test_data_matrix = np.zeros((n_users.shape[0], n_items.shape[0]))
+for row in test_data.itertuples():
+    test_data_matrix[row[1]-1, row[2]-1] = row[3]
+#display(test_data_matrix.shape)
+#display(test_data_matrix)
+
+
+
+
+#There are two major types of memory-based collaborative filtering.
+
+#User-based: “Users who are similar to you also like …”
+
+#Item-based: “Users who like this item also like …”
+
+#Since I am not sure which type has a better prediction for this data set at this point, I am going to calculate the cosine similarity for both types
+user_similarity = 1 - pairwise_distances(train_data_matrix, metric = 'cosine')
+#display(user_similarity.shape)
+#display(user_similarity)
+
+item_similarity = 1 - pairwise_distances(train_data_matrix.T, metric = 'cosine')
+#display(item_similarity.shape)
+#display(item_similarity)
+
+
+def predict(ratings, similarity, _type = 'user'):
+    if _type == 'user':
+        pred = similarity.dot(ratings) / np.array([np.abs(similarity).sum(axis = np.newaxis)])
+    
+    elif _type == 'item':
+        pred = ratings.dot(similarity) / np.array([np.abs(similarity).sum(axis = 1)]) 
+    
+    return pred
+
+user_pred = predict(train_data_matrix, user_similarity, _type = 'user')
+#display(user_pred.shape)                       
+#display(user_pred)
+user_pred_df = pd.DataFrame(user_pred, columns = list(n_items))
+user_pred_df.insert(0, 'user_id', list(n_users))
+
+
+
+#For the prediction by using the item similarity, I let the matrix of the train data set dot the matrix of item similarity to get a weighted sum.
+
+item_pred = predict(train_data_matrix, item_similarity, _type = 'item')
+#display(item_pred.shape)
+#display(item_pred)
+
+item_pred_df = pd.DataFrame(item_pred, columns = list(n_items))
+item_pred_df.insert(0, 'user_id', list(n_users))
+
+
+#Evaluation of the predictions
+'''
+def RMSE(prediction, ground_truth):
+    prediction = prediction[ground_truth.nonzero()].flatten()
+    ground_truth = ground_truth[ground_truth.nonzero()].flatten()
+    
+    return sqrt(mean_squared_error(prediction, ground_truth))
+
+#user_RMSE = RMSE(user_pred, test_data_matrix)
+#item_RMSE = RMSE(item_pred, test_data_matrix)
+#print('user_RMSE = {}'.format(user_RMSE))
+#print('item_RMSE = {}'.format(item_RMSE))
+'''
+
+
+def getRecommendations_RecipeBased(Recipe_id, top_n = 10):
+    global recommendedrecipes
+    global oldsuggestedrecipes0 
+    global oldsuggestedrecipes1 
+    global oldsuggestedrecipes2 
+    global oldsuggestedrecipes3
+    global oldsuggestedrecipes4
+    global suggestedrecipes
+    global recommended_array
+    
+    recommended_array = []
+    
+    for old_recipe, new_recipe in new_recipeID.items():
+        name = recipe[recipe['recipe_id'] == old_recipe]['name'].values[0]
+        if Recipe_id == new_recipe:
+            try:
+                recommended_recipe = f'Top {top_n} Recommended Recipes for - {name}\n'
+                suggestedrecipes = Label(suggested_frame, text = recommended_recipe)
+            except ValueError as error:
+                error = showerror(title='Error', message='recomend error')
+    
+    Recipe_rated = list(df['recipe_id'].loc[df['recipe_id'] == Recipe_id])
+    _all = item_pred_df.loc[item_pred_df['user_id'] == Recipe_id].copy()
+    _all.drop(item_pred_df[Recipe_rated], axis = 1, inplace = True)
+    recipe_sorted = _all.iloc[:,1:].sort_values(by = _all.index[0], axis = 1, ascending = False)
+    dict_top_n = recipe_sorted.iloc[:, :top_n].to_dict(orient = 'records')
+
+    i = 1
+    for recipe_id in list(dict_top_n[0].keys()):
+        for old_recipe, new_recipe in new_recipeID.items():
+            if recipe_id == new_recipe:
+                name = recipe[recipe['recipe_id'] == old_recipe]['name'].values[0]
+                ingredients = recipe[recipe['recipe_id'] == old_recipe]['ingredients'].values[0]
+                try:
+                    recommended =  f'Top {i} Original Recipe ID: {old_recipe} - {name}\n Ingredients: {ingredients}\n'
+                    recommended_array.append(recommended)
+                    i += 1
+                    
+                except ValueError as error:
+                    error = showerror(title='Error', message='recomend 2 error')
+    user_rec_array = []
+    for i in range(len( recommended_array)):
+        mtext = recommended_array[i]   
+        m = mtext.split('ID:')[1].split('Ingredients')[0]
+        user_rec_array.append(m)
+
+    datad = {'AB': user_rec_array}
+    user_recomended_df = pd.DataFrame(datad)
+
+    user_recomended_df[['id', 'name']] = user_recomended_df['AB'].str.split('-', 1, expand=True)
+    
+    oldsuggestedrecipes0 = Label(suggested_frame, text = user_recomended_df['name'][0])
+    oldsuggestedrecipes1 = Label(suggested_frame, text = user_recomended_df['name'][1])
+    oldsuggestedrecipes2 = Label(suggested_frame, text = user_recomended_df['name'][2])
+    oldsuggestedrecipes3 = Label(suggested_frame, text = user_recomended_df['name'][3])
+    oldsuggestedrecipes4 = Label(suggested_frame, text = user_recomended_df['name'][4])
+
+    oldsuggestedrecipes0.pack(side='bottom')
+    oldsuggestedrecipes1.pack(side='bottom')
+    oldsuggestedrecipes2.pack(side='bottom')
+    oldsuggestedrecipes3.pack(side='bottom')
+    oldsuggestedrecipes4.pack(side='bottom')
+    suggestedrecipes.pack(side='bottom')
+    return dict_top_n[0]
+
+
+
+
+def UserInput():
+      
+    global suggestedrecipes0
+    global suggestedrecipes1
+    global suggestedrecipes2
+    global suggestedrecipes3
+    global suggestedrecipes4
+    global recipes_1
+    global image_array
+    
+    try:
+        if suggestedrecipes0.winfo_ismapped() == True:
+            suggestedrecipes0.pack_forget()
+            suggestedrecipes1.pack_forget()
+            suggestedrecipes2.pack_forget()
+            suggestedrecipes3.pack_forget()
+            suggestedrecipes4.pack_forget()
+            likedrecipedes.pack_forget()
+            likedrecipeing.pack_forget()
+            likedrecipemeth.pack_forget()
+            label1.pack_forget()
+            UserslikeButton.pack_forget()
+            oldsuggestedrecipes0.pack_forget()
+            oldsuggestedrecipes1.pack_forget()
+            oldsuggestedrecipes2.pack_forget()
+            oldsuggestedrecipes3.pack_forget()
+            oldsuggestedrecipes4.pack_forget()
+            suggestedrecipes.pack_forget()
+            
+
+        else:
+            pass
+    except:
+        pass
+
+    user_input = MyInput.get()
+    MyLabelintro.after(100, MyLabelintro.destroy)
+    
+    y = str(user_input)   
+    x = user_input.replace('[', '')
+    x = x.replace(']', '')
+    x = x.replace("'", "")
+    x = x.replace(",", "")
+    x = x.split(" ")
+    
+    
+    recipe_id_select = []
+    recipe_id_select_2 = []
+    
+    
+    for i, j in zip(recipe['ingredients'], recipe['recipe_id']):
+        if all(item in i for item in x): 
+            recipe_id_select.append(j)
+       
+
+    if len(recipe_id_select) > 5:
+        randomElement = random.choices(recipe_id_select, k=5)
+        r1_table = pd.DataFrame(randomElement)
+    else: 
+        r1_table = pd.DataFrame(recipe_id_select)
+        
+
+              
+    try:
+        
+        recipes_1 = pd.merge(r1_table, R, left_on=[0], 
+                     right_on= ['id'], how='left')
+        recipes_1 = recipes_1.drop([0, 'contributor_id', 'nutrition', 'submitted', 'n_steps', 'tags', 'n_ingredients'], axis = 1)
+        if recipes_1 is not None:
+            suggestedrecipes0 = Label(suggested_frame, text = '1: ' + recipes_1['name'][0], padx = 20, pady = 7)
+            suggestedrecipes1 = Label(suggested_frame, text = '2: ' +recipes_1['name'][1], padx = 20, pady =7)
+            suggestedrecipes2 = Label(suggested_frame, text = '3: ' +recipes_1['name'][2], padx = 20, pady = 7)
+            suggestedrecipes3 = Label(suggested_frame, text = '4: ' +recipes_1['name'][3], padx = 20, pady = 7)
+            suggestedrecipes4 = Label(suggested_frame, text = '5: ' +recipes_1['name'][4], padx = 20, pady = 7)
+            
+            IlikeButton0.pack(padx=5)
+            IlikeButton1.pack()
+            IlikeButton2.pack()
+            IlikeButton3.pack()
+            IlikeButton4.pack()
+            suggestedrecipes0.pack()
+            suggestedrecipes1.pack()
+            suggestedrecipes2.pack()
+            suggestedrecipes3.pack()
+            suggestedrecipes4.pack()
+        else:
+            error = showerror(title='Error', message='We can`t find any general recipies that match these ingredients. Try removing some ingredients, check the spelling or use only single ingridients without an `s` at the end')
+    except:
+        error = showerror(title='Error', message='suggest error')
+      
+    import requests 
+    from bs4 import BeautifulSoup
+    
+    def getdata(url): 
+        r = requests.get(url) 
+        return r.text 
+
+
+    string_array = []
+
+    for i,j in zip(recipes_1['name'], recipes_1['id']):
+        string = str(i)+'-'+str(j)   
+        string = string.replace(' s ', 's')
+        string = string.replace('  ', '-')
+        string = string.replace(' ', '-')
+        string_array.append(string)
+
+    image_array = []
+
+    for l in string_array:    
+        htmldata = getdata("https://www.food.com/recipe/"+l) 
+        soup = BeautifulSoup(htmldata, 'html.parser') 
+        for item in soup.find_all('img'):
+            image_array.append(item['src'])
+        
+        
+    approved = ['q_55,w_744']
+    image_array = [url for url in image_array if any(sub in url for sub in approved)]
+    
+    return
+
+
+
+def nextSteps0():
+    
+    global likedrecipedes
+    global likedrecipeing
+    global likedrecipemeth
+    global UserslikeButton
+    global label1
+    
+    
+    next_step = 0 
+    next_step = str(next_step)      
+    
+    id_ = (int(recipes_1.iloc[[next_step]]['id']))
+    id_ = grouped_3[1].where(grouped_3[0] == id_)
+    id_ = id_.dropna()
+    id_ = id_.item()
+    
+    try:
+        if likedrecipedes.winfo_ismapped() == True:
+            likedrecipedes.pack_forget()
+            likedrecipeing.pack_forget()
+            likedrecipemeth.pack_forget()
+            UserslikeButton.pack_forget()
+            label1.pack_forget()
+            oldsuggestedrecipes0.pack_forget()
+            oldsuggestedrecipes1.pack_forget()
+            oldsuggestedrecipes2.pack_forget()
+            oldsuggestedrecipes3.pack_forget()
+            oldsuggestedrecipes4.pack_forget()
+            suggestedrecipes.pack_forget()
+        else:
+            pass
+    except:
+        pass
+    from PIL import ImageTk, Image
+    from urllib.request import urlopen
+    from io import BytesIO
+        
+    my_page = urlopen(image_array[0])
+    # create an image file object
+    my_picture = BytesIO(my_page.read())
+    # use PIL to open image formats like .jpg  .png  .gif  etc.
+    pil_img = Image.open(my_picture)
+    # convert to an image Tkinter can use
+    tk_img = ImageTk.PhotoImage(pil_img)
+    label1 = Label(pic_frame, image=tk_img)
+    label1.image = tk_img #keep a reference
+    label1.pack()
+            
+
+    try:
+        if next_step == '0':      
+            likedrecipedes = Message(more_frame, text = ('Description: ' + (recipes_1['description'][0])))
+            likedrecipeing = Message(more_frame, text = ('Ingredients: ' + (recipes_1['ingredients'][0])))
+            likedrecipemeth = Message(more_frame, text = ('Steps: ' + (recipes_1['steps'][0])))
+            UserslikeButton = Button(more_frame, text = 'Users also liked these recipies', padx = 40, pady = 5, command = lambda: getRecommendations_RecipeBased(id_, top_n = 5))
+            likedrecipedes.pack()
+            likedrecipeing.pack()
+            likedrecipemeth.pack()
+            UserslikeButton = Button(more_frame, text = 'Users also liked these recipies', padx = 40, pady = 5, command = lambda: getRecommendations_RecipeBased(id_, top_n = 5))
+            UserslikeButton.pack(padx=10, pady=10)              
+        return next_step, id_    
+    except:
+        error = showerror(title='Error', message='like error')
+        return next_step, id_
+    
+
+    
+    return next_step, id_
+        
+def nextSteps1():
+    
+    global likedrecipedes
+    global likedrecipeing
+    global likedrecipemeth
+    global UserslikeButton
+    global label1
+    
+    
+    next_step = 1 
+    next_step = str(next_step)      
+    
+    id_ = (int(recipes_1.iloc[[next_step]]['id']))
+    id_ = grouped_3[1].where(grouped_3[0] == id_)
+    id_ = id_.dropna()
+    id_ = id_.item()
+    
+    try:
+        if likedrecipedes.winfo_ismapped() == True:
+            likedrecipedes.pack_forget()
+            likedrecipeing.pack_forget()
+            likedrecipemeth.pack_forget()
+            UserslikeButton.pack_forget()
+            label1.pack_forget()
+            oldsuggestedrecipes0.pack_forget()
+            oldsuggestedrecipes1.pack_forget()
+            oldsuggestedrecipes2.pack_forget()
+            oldsuggestedrecipes3.pack_forget()
+            oldsuggestedrecipes4.pack_forget()
+            suggestedrecipes.pack_forget()
+        else:
+            pass
+    except:
+        pass
+     
+    
+    from PIL import ImageTk, Image
+    from urllib.request import urlopen
+    from io import BytesIO
+    
+    my_page = urlopen(image_array[1])
+    # create an image file object
+    my_picture = BytesIO(my_page.read())
+    # use PIL to open image formats like .jpg  .png  .gif  etc.
+    pil_img = Image.open(my_picture)
+    # convert to an image Tkinter can use
+    tk_img = ImageTk.PhotoImage(pil_img)
+    label1 = Label(pic_frame, image=tk_img)
+    label1.image = tk_img #keep a reference
+    label1.pack()
+    
+
+    try:
+
+        if next_step == '1':      
+            likedrecipedes = Message(more_frame, text = ('Description: ' + recipes_1['description'][1]))
+            likedrecipeing = Message(more_frame, text = ('Ingredients: ' + recipes_1['ingredients'][1]))
+            likedrecipemeth = Message(more_frame, text = ('Steps: ' + recipes_1['steps'][1]))
+            UserslikeButton = Button(more_frame, text = 'Users also liked these recipies', padx = 40, pady = 5, command = lambda: getRecommendations_RecipeBased(id_, top_n = 5))
+            likedrecipedes.pack()
+            likedrecipeing.pack()
+            likedrecipemeth.pack()
+            UserslikeButton = Button(more_frame, text = 'Users also liked these recipies', padx = 40, pady = 5, command = lambda: getRecommendations_RecipeBased(id_, top_n = 5))
+            UserslikeButton.pack(padx=10, pady=10)              
+        return next_step, id_    
+    except:
+        error = showerror(title='Error', message='like 2 error')
+        return next_step, id_
+    return next_step, id_
+        
+def nextSteps2():
+    
+    global likedrecipedes
+    global likedrecipeing
+    global likedrecipemeth
+    global UserslikeButton
+    global label1
+    
+    
+    next_step = 2 
+    next_step = str(next_step)      
+    
+    id_ = (int(recipes_1.iloc[[next_step]]['id']))
+    id_ = grouped_3[1].where(grouped_3[0] == id_)
+    id_ = id_.dropna()
+    id_ = id_.item()
+    
+    try:
+        if likedrecipedes.winfo_ismapped() == True:
+            likedrecipedes.pack_forget()
+            likedrecipeing.pack_forget()
+            likedrecipemeth.pack_forget()
+            UserslikeButton.pack_forget()
+            label1.pack_forget()
+            oldsuggestedrecipes0.pack_forget()
+            oldsuggestedrecipes1.pack_forget()
+            oldsuggestedrecipes2.pack_forget()
+            oldsuggestedrecipes3.pack_forget()
+            oldsuggestedrecipes4.pack_forget()
+            suggestedrecipes.pack_forget()
+        else:
+            pass
+    except:
+        pass
+    
+    from PIL import ImageTk, Image
+    from urllib.request import urlopen
+    from io import BytesIO
+        
+    my_page = urlopen(image_array[2])
+    # create an image file object
+    my_picture = BytesIO(my_page.read())
+    # use PIL to open image formats like .jpg  .png  .gif  etc.
+    pil_img = Image.open(my_picture)
+    # convert to an image Tkinter can use
+    tk_img = ImageTk.PhotoImage(pil_img)
+    label1 = Label(pic_frame, image=tk_img)
+    label1.image = tk_img #keep a reference
+    label1.pack()
+    
+
+    try:
+
+        if next_step == '2':      
+            likedrecipedes = Message(more_frame, text = ('Description: ' + recipes_1['description'][2]))
+            likedrecipeing = Message(more_frame, text = ('Ingredients: ' + recipes_1['ingredients'][2]))
+            likedrecipemeth = Message(more_frame, text = ('Steps: ' + recipes_1['steps'][2]))
+            UserslikeButton = Button(more_frame, text = 'Users also liked these recipies', padx = 40, pady = 5, command = lambda: getRecommendations_RecipeBased(id_, top_n = 5))
+            likedrecipedes.pack()
+            likedrecipeing.pack()
+            likedrecipemeth.pack()
+            UserslikeButton = Button(more_frame, text = 'Users also liked these recipies', padx = 40, pady = 5, command = lambda: getRecommendations_RecipeBased(id_, top_n = 5))
+            UserslikeButton.pack(padx=10, pady=10)              
+        return next_step, id_    
+    except:
+        error = showerror(title='Error', message='like 3 error')
+
+        return next_step, id_
+    return next_step, id_
+        
+def nextSteps3():
+    
+    global likedrecipedes
+    global likedrecipeing
+    global likedrecipemeth
+    global UserslikeButton
+    global label1
+    
+    
+    next_step = 3 
+    next_step = str(next_step)      
+    
+    id_ = (int(recipes_1.iloc[[next_step]]['id']))
+    id_ = grouped_3[1].where(grouped_3[0] == id_)
+    id_ = id_.dropna()
+    id_ = id_.item()
+    
+    try:
+        if likedrecipedes.winfo_ismapped() == True:
+            likedrecipedes.pack_forget()
+            likedrecipeing.pack_forget()
+            likedrecipemeth.pack_forget()
+            UserslikeButton.pack_forget()
+            label1.pack_forget()
+            oldsuggestedrecipes0.pack_forget()
+            oldsuggestedrecipes1.pack_forget()
+            oldsuggestedrecipes2.pack_forget()
+            oldsuggestedrecipes3.pack_forget()
+            oldsuggestedrecipes4.pack_forget()
+            suggestedrecipes.pack_forget()
+        else:
+            pass
+    except:
+        pass
+    from PIL import ImageTk, Image
+    from urllib.request import urlopen
+    from io import BytesIO
+        
+    my_page = urlopen(image_array[3])
+    # create an image file object
+    my_picture = BytesIO(my_page.read())
+    # use PIL to open image formats like .jpg  .png  .gif  etc.
+    pil_img = Image.open(my_picture)
+    # convert to an image Tkinter can use
+    tk_img = ImageTk.PhotoImage(pil_img)
+    label1 = Label(pic_frame, image=tk_img)
+    label1.image = tk_img #keep a reference
+    label1.pack()
+
+    try:
+
+        if next_step == '3':      
+            likedrecipedes = Message(more_frame, text = ('Description: ' + recipes_1['description'][3]))
+            likedrecipeing = Message(more_frame, text = ('Ingredients: ' + recipes_1['ingredients'][3]))
+            likedrecipemeth = Message(more_frame, text = ('Steps: ' + recipes_1['steps'][3]))
+            UserslikeButton = Button(more_frame, text = 'Users also liked these recipies', padx = 40, pady = 5, command = lambda: getRecommendations_RecipeBased(id_, top_n = 5))
+            likedrecipedes.pack()
+            likedrecipeing.pack()
+            likedrecipemeth.pack()
+            UserslikeButton = Button(more_frame, text = 'Users also liked these recipies', padx = 40, pady = 5, command = lambda: getRecommendations_RecipeBased(id_, top_n = 5))
+            UserslikeButton.pack(padx=10, pady=10)              
+        return next_step, id_    
+    except:
+        error = showerror(title='Error', message='like 4 error')
+        return next_step, id_
+    return next_step, id_
+        
+def nextSteps4():
+    
+    global likedrecipedes
+    global likedrecipeing
+    global likedrecipemeth
+    global UserslikeButton
+    global label1
+    
+    
+    next_step = 4 
+    next_step = str(next_step)      
+    
+    id_ = (int(recipes_1.iloc[[next_step]]['id']))
+    id_ = grouped_3[1].where(grouped_3[0] == id_)
+    id_ = id_.dropna()
+    id_ = id_.item()
+    
+    try:
+        if likedrecipedes.winfo_ismapped() == True:
+            likedrecipedes.pack_forget()
+            likedrecipeing.pack_forget()
+            likedrecipemeth.pack_forget()
+            UserslikeButton.pack_forget()
+            label1.pack_forget()
+            suggestedrecipes.pack_forget()
+            oldsuggestedrecipes0.pack_forget()
+            oldsuggestedrecipes1.pack_forget()
+            oldsuggestedrecipes2.pack_forget()
+            oldsuggestedrecipes3.pack_forget()
+            oldsuggestedrecipes4.pack_forget()
+            
+        else:
+            pass
+    except:
+        pass
+    
+    from PIL import ImageTk, Image
+    from urllib.request import urlopen
+    from io import BytesIO
+        
+    my_page = urlopen(image_array[4])
+    # create an image file object
+    my_picture = BytesIO(my_page.read())
+    # use PIL to open image formats like .jpg  .png  .gif  etc.
+    pil_img = Image.open(my_picture)
+    # convert to an image Tkinter can use
+    tk_img = ImageTk.PhotoImage(pil_img)
+    label1 = Label(pic_frame, image=tk_img)
+    label1.image = tk_img #keep a reference
+    label1.pack()
+    
+
+    try:
+
+        if next_step == '4':      
+            likedrecipedes = Message(more_frame, text = ('Description: ' + recipes_1['description'][4]))
+            likedrecipeing = Message(more_frame, text = ('Ingredients: ' + recipes_1['ingredients'][4]))
+            likedrecipemeth = Message(more_frame, text = ('Steps: ' + recipes_1['steps'][4]))
+            UserslikeButton = Button(more_frame, text = 'Users also liked these recipies', padx = 40, pady = 5, command = lambda: getRecommendations_RecipeBased(id_, top_n = 5))
+            likedrecipedes.pack()
+            likedrecipeing.pack()
+            likedrecipemeth.pack()
+            UserslikeButton = Button(more_frame, text = 'Users also liked these recipies', padx = 40, pady = 5, command = lambda: getRecommendations_RecipeBased(id_, top_n = 5))
+            UserslikeButton.pack(padx=10, pady=10)              
+        return next_step, id_    
+    except:
+        error = showerror(title='Error', message='like 4 error')
+        return next_step, id_
+    return next_step, id_
+               
+
+
+from tkinter import *
+root  =  Tk()  # create root window
+root.title("recipe suggester")
+root.maxsize(1800,  800)
+root.config(bg="skyblue")
+
+
+
+
+
+# Create left and right frames
+
+Search_frame  =  Frame(root,  width=200,  height=400,  bg='grey')
+Search_frame.pack(side='top',  fill='both',  padx=10,  pady=5,  expand=True)
+
+button_frame  =  Frame(root,  width=200,  height=400,  bg='grey')
+button_frame.pack(side='left',  fill='both',  padx=10,  pady=5,  expand=True)
+
+suggested_frame  =  Frame(root,  width=200,  height=400,  bg='grey')
+suggested_frame.pack(side='left',  fill='both',  padx=10,  pady=5,  expand=True)
+
+more_frame  =  Frame(root,  width=650,  height=400,  bg='grey')
+more_frame.pack(side='right',  fill='both',  padx=10,  pady=5,  expand=True)
+
+pic_frame  =  Frame(root,  width=650,  height=400,  bg='grey')
+pic_frame.pack(side='right',  fill='both',  padx=10,  pady=5,  expand=True)
+
+Label(button_frame,  text="button").pack(side='top',  padx=5,  pady=5)
+# Create frames and labels in left_frame
+Label(suggested_frame,  text="suggested recipes").pack(side='top',  padx=5,  pady=5)
+
+Label(pic_frame,  text="picture").pack(side='top',  padx=5,  pady=5)
+#large_image = original_image.subsample(2,2)
+Label(more_frame,  text="more info").pack(fill='both',  padx=5,  pady=5)
+
+SearchButton = Button(Search_frame, text = 'Search recipes', padx = 40, pady = 5, command = UserInput)
+IlikeButton0 = Button(button_frame, text = 'I like number 1', padx = 40, pady = 5, command = nextSteps0)
+IlikeButton1 = Button(button_frame, text = 'I like number 2', padx = 40, pady = 5, command = nextSteps1)
+IlikeButton2 = Button(button_frame, text = 'I like number 3', padx = 40, pady = 5, command = nextSteps2)
+IlikeButton3 = Button(button_frame, text = 'I like number 4', padx = 40, pady = 5, command = nextSteps3)
+IlikeButton4 = Button(button_frame, text = 'I like number 5', padx = 40, pady = 5, command = nextSteps4)
+UserslikeButton = Button(root, text = 'Users also liked these recipies', padx = 40, pady = 5, command = lambda: getRecommendations_RecipeBased(id_, top_n = 5))
+
+
+
+MyLabelintro = Label(Search_frame, text = 'Welcome to the recipe suggester. Put in your ingredients below, seperated by a space to start searching for recipes.', padx = 40, pady = 5)
+MyInput = Entry(Search_frame, width=35, borderwidth=5)
+
+
+MyLabelintro.pack()
+SearchButton.pack()
+MyInput.pack()
+
+
+root.mainloop()
+
+
