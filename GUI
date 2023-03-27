@@ -19,8 +19,8 @@ import random
 
 
 
-I = pd.read_csv(r'C:\Users\Hayes\OneDrive\Documents\Data_sets\Coding projects\Food\interactions_train.csv')
-R = pd.read_csv(r'C:\Users\Hayes\OneDrive\Documents\Data_sets\Coding projects\Food\RAW_recipes.csv')
+I = pd.read_csv(r'!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+R = pd.read_csv(r'!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
 
 #show recipe rating distribution
 
